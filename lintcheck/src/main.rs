@@ -22,8 +22,15 @@ use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+#[cfg(not(windows))]
 const CLIPPY_DRIVER_PATH: &str = "target/debug/clippy-driver";
+#[cfg(not(windows))]
 const CARGO_CLIPPY_PATH: &str = "target/debug/cargo-clippy";
+
+#[cfg(windows)]
+const CLIPPY_DRIVER_PATH: &str = "target/debug/clippy-driver.exe";
+#[cfg(windows)]
+const CARGO_CLIPPY_PATH: &str = "target/debug/cargo-clippy.exe";
 
 const LINTCHECK_DOWNLOADS: &str = "target/lintcheck/downloads";
 const LINTCHECK_SOURCES: &str = "target/lintcheck/sources";
@@ -253,14 +260,7 @@ impl Crate {
         let shared_target_dir = clippy_project_root().join("target/lintcheck/shared_target_dir");
 
         let mut args = if fix {
-            vec![
-                "-Zunstable-options",
-                "--fix",
-                "-Zunstable-options",
-                "--allow-no-vcs",
-                "--",
-                "--cap-lints=warn",
-            ]
+            vec!["--fix", "--allow-no-vcs", "--", "--cap-lints=warn"]
         } else {
             vec!["--", "--message-format=json", "--", "--cap-lints=warn"]
         };

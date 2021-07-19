@@ -125,6 +125,7 @@ const ALLOWED_TO_BE_SIMILAR: &[&[&str]] = &[
     &["args", "arms"],
     &["qpath", "path"],
     &["lit", "lint"],
+    &["wparam", "lparam"],
 ];
 
 struct SimilarNamesNameVisitor<'a, 'tcx, 'b>(&'b mut SimilarNamesLocalVisitor<'a, 'tcx>);
@@ -137,7 +138,7 @@ impl<'a, 'tcx, 'b> Visitor<'tcx> for SimilarNamesNameVisitor<'a, 'tcx, 'b> {
                     self.check_ident(ident);
                 }
             },
-            PatKind::Struct(_, ref fields, _) => {
+            PatKind::Struct(_, _, ref fields, _) => {
                 for field in fields {
                     if !field.is_shorthand {
                         self.visit_pat(&field.pat);
@@ -216,7 +217,6 @@ impl<'a, 'tcx, 'b> SimilarNamesNameVisitor<'a, 'tcx, 'b> {
             if allowed_to_be_similar(&interned_name, existing_name.exemptions) {
                 continue;
             }
-            let mut split_at = None;
             match existing_name.len.cmp(&count) {
                 Ordering::Greater => {
                     if existing_name.len - count != 1
@@ -267,7 +267,6 @@ impl<'a, 'tcx, 'b> SimilarNamesNameVisitor<'a, 'tcx, 'b> {
                                 // or too many chars differ (foo_x, boo_y) or (foox, booy)
                                 continue;
                             }
-                            split_at = interned_name.char_indices().rev().next().map(|(i, _)| i);
                         }
                     } else {
                         let second_i = interned_chars.next().expect("we know we have at least two chars");
@@ -280,7 +279,6 @@ impl<'a, 'tcx, 'b> SimilarNamesNameVisitor<'a, 'tcx, 'b> {
                             // or too many chars differ (x_foo, y_boo) or (xfoo, yboo)
                             continue;
                         }
-                        split_at = interned_name.chars().next().map(char::len_utf8);
                     }
                 },
             }
@@ -291,17 +289,6 @@ impl<'a, 'tcx, 'b> SimilarNamesNameVisitor<'a, 'tcx, 'b> {
                 "binding's name is too similar to existing binding",
                 |diag| {
                     diag.span_note(existing_name.span, "existing binding defined here");
-                    if let Some(split) = split_at {
-                        diag.span_help(
-                            ident.span,
-                            &format!(
-                                "separate the discriminating character by an \
-                                 underscore like: `{}_{}`",
-                                &interned_name[..split],
-                                &interned_name[split..]
-                            ),
-                        );
-                    }
                 },
             );
             return;
