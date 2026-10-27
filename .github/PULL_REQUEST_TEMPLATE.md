@@ -3,11 +3,15 @@ Thank you for making Clippy better!
 We're collecting our changelog from pull request descriptions.
 If your PR only includes internal changes, you can just write
 `changelog: none`. Otherwise, please write a short comment
-explaining your change. Also, it's helpful for us that
-the lint name is put into brackets `[]` and backticks `` ` ` ``,
-e.g. ``[`lint_name`]``.
+explaining your change.
 
-If your PR fixes an issue, you can add "fixes #issue_number" into this
+It's also helpful for us that the lint name is put within backticks (`` ` ` ``),
+and then encapsulated by square brackets (`[]`), for example:
+```
+changelog: [`lint_name`]: your change
+```
+
+If your PR fixes an issue, you can add `fixes #issue_number` into this
 PR description. This way the issue will be automatically closed when
 your PR is merged.
 
@@ -25,6 +29,19 @@ checked during review or continuous integration.
 
 Note that you can skip the above if you are just opening a WIP PR in
 order to get feedback.
+
+---
+
+Please read our [LLM policy] before opening a PR.
+If you used an LLM to generate any part of this PR, including the PR description,
+please disclose that according to our [guidelines][disclosure guidelines].
+LLM contributions are not banned, but are held to a higher standard of review and correctness.
+
+[LLM policy]: https://forge.rust-lang.org/policies/llm-usage.html
+<!-- TODO: Once the new LLM usage policy is deployed, change the LLM policy link into ours.
+[LLM policy]: https://doc.rust-lang.org/stable/clippy/development/development/llm-usage.html-->
+
+[disclosure guidelines]: https://rustc-dev-guide.rust-lang.org/llm-guidance/writing.html#disclosure-guidelines
 
 Delete this line and everything above before opening your PR.
 

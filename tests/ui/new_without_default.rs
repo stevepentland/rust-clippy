@@ -1,11 +1,16 @@
-#![feature(const_fn)]
-#![allow(dead_code, clippy::missing_safety_doc)]
 #![warn(clippy::new_without_default)]
+#![expect(
+    clippy::extra_unused_lifetimes,
+    clippy::missing_safety_doc,
+    clippy::unnecessary_as_slice
+)]
 
 pub struct Foo;
 
 impl Foo {
     pub fn new() -> Foo {
+        //~^ new_without_default
+
         Foo
     }
 }
@@ -14,6 +19,8 @@ pub struct Bar;
 
 impl Bar {
     pub fn new() -> Self {
+        //~^ new_without_default
+
         Bar
     }
 }
@@ -78,9 +85,10 @@ pub struct LtKo<'a> {
 
 impl<'c> LtKo<'c> {
     pub fn new() -> LtKo<'c> {
+        //~^ new_without_default
+
         unimplemented!()
     }
-    // FIXME: that suggestion is missing lifetimes
 }
 
 struct Private;
@@ -91,12 +99,29 @@ impl Private {
     } // We don't lint private items
 }
 
-struct Const;
+struct PrivateStruct;
+
+impl PrivateStruct {
+    pub fn new() -> PrivateStruct {
+        unimplemented!()
+    } // We don't lint public items on private structs
+}
+
+pub struct PrivateItem;
+
+impl PrivateItem {
+    fn new() -> PrivateItem {
+        unimplemented!()
+    } // We don't lint private items on public structs
+}
+
+pub struct Const;
 
 impl Const {
     pub const fn new() -> Const {
+        //~^ new_without_default
         Const
-    } // const fns can't be implemented via Default
+    } // While Default is not const, it can still call const functions, so we should lint this
 }
 
 pub struct IgnoreGenericNew;
@@ -155,6 +180,8 @@ pub struct NewNotEqualToDerive {
 impl NewNotEqualToDerive {
     // This `new` implementation is not equal to a derived `Default`, so do not suggest deriving.
     pub fn new() -> Self {
+        //~^ new_without_default
+
         NewNotEqualToDerive { foo: 1 }
     }
 }
@@ -163,6 +190,8 @@ impl NewNotEqualToDerive {
 pub struct FooGenerics<T>(std::marker::PhantomData<T>);
 impl<T> FooGenerics<T> {
     pub fn new() -> Self {
+        //~^ new_without_default
+
         Self(Default::default())
     }
 }
@@ -170,8 +199,183 @@ impl<T> FooGenerics<T> {
 pub struct BarGenerics<T>(std::marker::PhantomData<T>);
 impl<T: Copy> BarGenerics<T> {
     pub fn new() -> Self {
+        //~^ new_without_default
+
         Self(Default::default())
     }
 }
 
+pub mod issue7220 {
+    pub struct Foo<T> {
+        _bar: *mut T,
+    }
+
+    impl<T> Foo<T> {
+        pub fn new() -> Self {
+            //~^ new_without_default
+
+            todo!()
+        }
+    }
+}
+
+// see issue #8152
+// This should not create any lints
+pub struct DocHidden;
+impl DocHidden {
+    #[doc(hidden)]
+    pub fn new() -> Self {
+        DocHidden
+    }
+}
+
 fn main() {}
+
+pub struct IgnoreConstGenericNew(usize);
+impl IgnoreConstGenericNew {
+    pub fn new<const N: usize>() -> Self {
+        Self(N)
+    }
+}
+
+pub struct IgnoreLifetimeNew;
+impl IgnoreLifetimeNew {
+    pub fn new<'a>() -> Self {
+        Self
+    }
+}
+
+// From issue #11267
+
+pub struct MyStruct<K, V>
+where
+    K: std::hash::Hash + Eq + PartialEq,
+{
+    _kv: Option<(K, V)>,
+}
+
+impl<K, V> MyStruct<K, V>
+where
+    K: std::hash::Hash + Eq + PartialEq,
+{
+    pub fn new() -> Self {
+        //~^ new_without_default
+        Self { _kv: None }
+    }
+}
+
+// From issue #14552, but with `#[cfg]`s that are actually `true` in the uitest context
+
+pub struct NewWithCfg;
+impl NewWithCfg {
+    #[cfg(not(test))]
+    pub fn new() -> Self {
+        //~^ new_without_default
+        unimplemented!()
+    }
+}
+
+pub struct NewWith2Cfgs;
+impl NewWith2Cfgs {
+    #[cfg(not(test))]
+    #[cfg(panic = "unwind")]
+    pub fn new() -> Self {
+        //~^ new_without_default
+        unimplemented!()
+    }
+}
+
+pub struct NewWithExtraneous;
+impl NewWithExtraneous {
+    #[inline]
+    pub fn new() -> Self {
+        //~^ new_without_default
+        unimplemented!()
+    }
+}
+
+pub struct NewWithCfgAndExtraneous;
+impl NewWithCfgAndExtraneous {
+    #[cfg(not(test))]
+    #[inline]
+    pub fn new() -> Self {
+        //~^ new_without_default
+        unimplemented!()
+    }
+}
+
+mod issue15778 {
+    pub struct Foo(Vec<i32>);
+
+    impl Foo {
+        pub fn new() -> Self {
+            Self(Vec::new())
+        }
+    }
+
+    impl<'a> IntoIterator for &'a Foo {
+        type Item = &'a i32;
+
+        type IntoIter = std::slice::Iter<'a, i32>;
+
+        fn into_iter(self) -> Self::IntoIter {
+            self.0.as_slice().iter()
+        }
+    }
+}
+
+pub mod issue16255 {
+    use std::fmt::Display;
+    use std::marker::PhantomData;
+
+    pub struct Foo<T> {
+        marker: PhantomData<T>,
+    }
+
+    impl<T> Foo<T>
+    where
+        T: Display,
+    {
+        pub fn new() -> Self
+        //~^ new_without_default
+        where
+            T: Clone,
+        {
+            Self { marker: PhantomData }
+        }
+    }
+
+    pub struct Bar<T> {
+        marker: PhantomData<T>,
+    }
+
+    impl<T> Bar<T> {
+        pub fn new() -> Self
+        //~^ new_without_default
+        where
+            T: Clone,
+        {
+            Self { marker: PhantomData }
+        }
+    }
+}
+
+pub mod issue17361 {
+    //! This test ensures that attributes applied to the impl block
+    //! containing `fn new()` do not get mistakenly applied to the
+    //! newly generated `Default` trait impl. This has been the
+    //! case because the `Default` trait impl was inserted right
+    //! before the existing impl block, but after the attributes.
+
+    #![deny(clippy::unwrap_used, reason = "check that expect below stays put")]
+
+    pub struct S;
+
+    #[expect(clippy::unwrap_used, reason = "without it, new() fails to compile")]
+    impl S {
+        pub fn new() -> S {
+            //~^ new_without_default
+            std::hint::black_box(Some(S)).unwrap()
+        }
+    }
+}

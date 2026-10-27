@@ -1,12 +1,11 @@
-#![feature(const_generics)]
-#![allow(incomplete_features)]
+//@ check-pass
 
 pub struct ArrayWrapper<const N: usize>([usize; N]);
 
 impl<const N: usize> ArrayWrapper<{ N }> {
     pub fn ice(&self) {
         for i in self.0.iter() {
-            println!("{}", i);
+            println!("{i}");
         }
     }
 }

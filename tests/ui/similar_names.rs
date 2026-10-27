@@ -1,5 +1,10 @@
 #![warn(clippy::similar_names)]
-#![allow(unused, clippy::println_empty_string)]
+#![expect(
+    clippy::diverging_sub_expression,
+    clippy::empty_loop,
+    clippy::never_loop,
+    clippy::println_empty_string
+)]
 
 struct Foo {
     apple: i32,
@@ -10,10 +15,9 @@ fn main() {
     let specter: i32;
     let spectre: i32;
 
+    // ok; first letter is different enough
     let apple: i32;
-
     let bpple: i32;
-
     let cpple: i32;
 
     let a_bar: i32;
@@ -39,10 +43,19 @@ fn main() {
 
     let blubx: i32;
     let bluby: i32;
+    //~^ similar_names
 
-    let cake: i32;
+    let orange: i32;
+    let ornange: i32;
+    //~^ similar_names
+
     let cakes: i32;
+    let cake: i32;
     let coke: i32;
+    //~^ similar_names
+
+    let wagon: i32;
+    let twagon: i32;
 
     match 5 {
         cheese @ 1 => {},
@@ -61,10 +74,12 @@ fn main() {
     let xyz1abc: i32;
     let xyz2abc: i32;
     let xyzeabc: i32;
+    //~^ similar_names
 
     let parser: i32;
     let parsed: i32;
     let parsee: i32;
+    //~^ similar_names
 
     let setter: i32;
     let getter: i32;
@@ -72,6 +87,20 @@ fn main() {
     let rx1: i32;
     let tx_cake: i32;
     let rx_cake: i32;
+
+    // names often used in win32 code (for example WindowProc)
+    let wparam: i32;
+    let lparam: i32;
+
+    let iter: i32;
+    let item: i32;
+
+    // 3 letter names are allowed to be similar
+    let kta: i32;
+    let ktv: i32;
+
+    let checked_exp: i32;
+    let checked_expr: i32;
 }
 
 fn foo() {
@@ -79,6 +108,7 @@ fn foo() {
     let Foo {
         apple: spring,
         bpple: sprang,
+        //~^ similar_names
     } = unimplemented!();
 }
 

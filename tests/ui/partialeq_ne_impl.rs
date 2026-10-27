@@ -1,5 +1,4 @@
-#![allow(dead_code)]
-
+#![warn(clippy::partialeq_ne_impl)]
 struct Foo;
 
 impl PartialEq for Foo {
@@ -7,6 +6,8 @@ impl PartialEq for Foo {
         true
     }
     fn ne(&self, _: &Foo) -> bool {
+        //~^ partialeq_ne_impl
+
         false
     }
 }

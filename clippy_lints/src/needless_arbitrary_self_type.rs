@@ -1,22 +1,19 @@
-use clippy_utils::diagnostics::span_lint_and_sugg;
-use clippy_utils::in_macro;
-use if_chain::if_chain;
-use rustc_ast::ast::{BindingMode, Lifetime, Mutability, Param, PatKind, Path, TyKind};
+use clippy_utils::diagnostics::span_lint_and_then;
+use clippy_utils::source::snippet_with_applicability;
+use rustc_ast::ast::{BindingMode, ByRef, Lifetime, Param, PatKind, TyKind};
 use rustc_errors::Applicability;
-use rustc_lint::{EarlyContext, EarlyLintPass};
-use rustc_session::{declare_lint_pass, declare_tool_lint};
+use rustc_lint::{EarlyContext, EarlyLintPass, declare_lint_pass};
 use rustc_span::symbol::kw;
-use rustc_span::Span;
 
 declare_clippy_lint! {
-    /// **What it does:** The lint checks for `self` in fn parameters that
+    /// ### What it does
+    /// The lint checks for `self` in fn parameters that
     /// specify the `Self`-type explicitly
-    /// **Why is this bad?** Increases the amount and decreases the readability of code
+    /// ### Why is this bad?
+    /// Increases the amount and decreases the readability of code
     ///
-    /// **Known problems:** None
-    ///
-    /// **Example:**
-    /// ```rust
+    /// ### Example
+    /// ```no_run
     /// enum ValType {
     ///     I32,
     ///     I64,
@@ -36,7 +33,7 @@ declare_clippy_lint! {
     ///
     /// Could be rewritten as
     ///
-    /// ```rust
+    /// ```no_run
     /// enum ValType {
     ///     I32,
     ///     I64,
@@ -53,6 +50,7 @@ declare_clippy_lint! {
     ///     }
     /// }
     /// ```
+    #[clippy::version = "1.47.0"]
     pub NEEDLESS_ARBITRARY_SELF_TYPE,
     complexity,
     "type of `self` parameter is already by default `Self`"
@@ -65,75 +63,62 @@ enum Mode {
     Value,
 }
 
-fn check_param_inner(cx: &EarlyContext<'_>, path: &Path, span: Span, binding_mode: &Mode, mutbl: Mutability) {
-    if_chain! {
-        if let [segment] = &path.segments[..];
-        if segment.ident.name == kw::SelfUpper;
-        then {
-            // In case we have a named lifetime, we check if the name comes from expansion.
-            // If it does, at this point we know the rest of the parameter was written by the user,
-            // so let them decide what the name of the lifetime should be.
-            // See #6089 for more details.
-            let mut applicability = Applicability::MachineApplicable;
-            let self_param = match (binding_mode, mutbl) {
-                (Mode::Ref(None), Mutability::Mut) => "&mut self".to_string(),
-                (Mode::Ref(Some(lifetime)), Mutability::Mut) => {
-                    if in_macro(lifetime.ident.span) {
-                        applicability = Applicability::HasPlaceholders;
-                        "&'_ mut self".to_string()
-                    } else {
-                        format!("&{} mut self", &lifetime.ident.name)
-                    }
-                },
-                (Mode::Ref(None), Mutability::Not) => "&self".to_string(),
-                (Mode::Ref(Some(lifetime)), Mutability::Not) => {
-                    if in_macro(lifetime.ident.span) {
-                        applicability = Applicability::HasPlaceholders;
-                        "&'_ self".to_string()
-                    } else {
-                        format!("&{} self", &lifetime.ident.name)
-                    }
-                },
-                (Mode::Value, Mutability::Mut) => "mut self".to_string(),
-                (Mode::Value, Mutability::Not) => "self".to_string(),
-            };
+impl EarlyLintPass for NeedlessArbitrarySelfType {
+    fn check_param(&mut self, cx: &EarlyContext<'_>, p: &Param) {
+        // Bail out if the parameter it's not a receiver or was not written by the user
+        if !p.is_self() || p.span.from_expansion() {
+            return;
+        }
 
-            span_lint_and_sugg(
+        let (path, binding_mode, mutbl) = match &p.ty.kind {
+            TyKind::Path(None, path) if let PatKind::Ident(BindingMode(ByRef::No, mutbl), _, _) = p.pat.kind => {
+                (path, Mode::Value, mutbl)
+            },
+            TyKind::Ref(lifetime, ty, mutbl)
+                if let TyKind::Path(None, path) = &ty.kind
+                    && let PatKind::Ident(BindingMode::NONE, _, _) = p.pat.kind =>
+            {
+                (path, Mode::Ref(*lifetime), *mutbl)
+            },
+            _ => return,
+        };
+
+        let span = p.span.to(p.ty.span);
+        if let [segment] = &path.segments[..]
+            && segment.ident.name == kw::SelfUpper
+        {
+            span_lint_and_then(
                 cx,
                 NEEDLESS_ARBITRARY_SELF_TYPE,
                 span,
                 "the type of the `self` parameter does not need to be arbitrary",
-                "consider to change this parameter to",
-                self_param,
-                applicability,
-            )
-        }
-    }
-}
+                |diag| {
+                    let mut applicability = Applicability::MachineApplicable;
+                    let add = match binding_mode {
+                        Mode::Value => String::new(),
+                        Mode::Ref(None) => mutbl.ref_prefix_str().to_string(),
+                        Mode::Ref(Some(lifetime)) => {
+                            // In case we have a named lifetime, we check if the name comes from expansion.
+                            // If it does, at this point we know the rest of the parameter was written by the user,
+                            // so let them decide what the name of the lifetime should be.
+                            // See #6089 for more details.
+                            let lt_name = if lifetime.ident.span.from_expansion() {
+                                applicability = Applicability::HasPlaceholders;
+                                "'_".into()
+                            } else {
+                                snippet_with_applicability(cx, lifetime.ident.span, "'_", &mut applicability)
+                            };
+                            format!("&{lt_name} {mut_}", mut_ = mutbl.prefix_str())
+                        },
+                    };
 
-impl EarlyLintPass for NeedlessArbitrarySelfType {
-    fn check_param(&mut self, cx: &EarlyContext<'_>, p: &Param) {
-        // Bail out if the parameter it's not a receiver or was not written by the user
-        if !p.is_self() || in_macro(p.span) {
-            return;
-        }
-
-        match &p.ty.kind {
-            TyKind::Path(None, path) => {
-                if let PatKind::Ident(BindingMode::ByValue(mutbl), _, _) = p.pat.kind {
-                    check_param_inner(cx, path, p.span.to(p.ty.span), &Mode::Value, mutbl)
-                }
-            },
-            TyKind::Rptr(lifetime, mut_ty) => {
-                if_chain! {
-                if let TyKind::Path(None, path) = &mut_ty.ty.kind;
-                if let PatKind::Ident(BindingMode::ByValue(Mutability::Not), _, _) = p.pat.kind;
-                    then {
-                        check_param_inner(cx, path, p.span.to(p.ty.span), &Mode::Ref(*lifetime), mut_ty.mutbl)
+                    let mut sugg = vec![(p.ty.span.with_lo(p.span.hi()), String::new())];
+                    if !add.is_empty() {
+                        sugg.push((p.span.shrink_to_lo(), add));
                     }
-                }
-            },
-            _ => {},
+                    diag.multipart_suggestion("remove the type", sugg, applicability);
+                },
+            );
         }
     }
 }

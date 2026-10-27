@@ -1,5 +1,6 @@
-#![allow(unused)]
-struct Mappable {}
+//@ check-pass
+
+struct Mappable;
 
 impl Mappable {
     pub fn map(&self) {}

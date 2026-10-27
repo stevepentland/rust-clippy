@@ -1,15 +1,10 @@
-// edition:2018
+//@ check-pass
 
-#![warn(clippy::all, clippy::pedantic)]
-#![allow(
-    clippy::missing_errors_doc,
-    clippy::needless_pass_by_value,
-    clippy::must_use_candidate,
-    clippy::unused_self,
-    clippy::needless_lifetimes,
+#![warn(clippy::should_implement_trait)]
+#![expect(
     clippy::missing_safety_doc,
-    clippy::wrong_self_convention,
-    clippy::missing_panics_doc
+    clippy::needless_lifetimes,
+    clippy::wrong_self_convention
 )]
 
 use std::ops::Mul;

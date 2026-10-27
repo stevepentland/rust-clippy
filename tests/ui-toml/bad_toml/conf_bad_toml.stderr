@@ -1,4 +1,14 @@
-error: error reading Clippy's configuration file `$DIR/clippy.toml`: expected an equals, found an identifier at line 1 column 4
+error: key with no value, expected `=`
+  --> $DIR/tests/ui-toml/bad_toml/clippy.toml:1:4
+   |
+LL | fn this_is_obviously(not: a, toml: file) {
+   |    ^
 
-error: aborting due to previous error
+error: invalid key-value pair, expected key
+  --> $DIR/tests/ui-toml/bad_toml/clippy.toml:2:1
+   |
+LL | }
+   | ^
+
+error: aborting due to 2 previous errors
 

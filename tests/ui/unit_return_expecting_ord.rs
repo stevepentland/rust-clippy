@@ -1,7 +1,6 @@
 #![warn(clippy::unit_return_expecting_ord)]
-#![allow(clippy::needless_return)]
+#![expect(clippy::needless_return, clippy::useless_vec)]
 #![allow(clippy::unused_unit)]
-#![feature(is_sorted)]
 
 struct Struct {
     field: isize,
@@ -16,13 +15,19 @@ fn unit(_i: isize) {}
 fn main() {
     let mut structs = vec![Struct { field: 2 }, Struct { field: 1 }];
     structs.sort_by_key(|s| {
+        //~^ unit_return_expecting_ord
+
         double(s.field);
     });
     structs.sort_by_key(|s| double(s.field));
     structs.is_sorted_by_key(|s| {
+        //~^ unit_return_expecting_ord
+
         double(s.field);
     });
     structs.is_sorted_by_key(|s| {
+        //~^ unit_return_expecting_ord
+
         if s.field > 0 {
             ()
         } else {
@@ -33,4 +38,5 @@ fn main() {
         return double(s.field);
     });
     structs.sort_by_key(|s| unit(s.field));
+    //~^ unit_return_expecting_ord
 }

@@ -1,13 +1,5 @@
 #![warn(clippy::if_same_then_else)]
-#![allow(
-    clippy::blacklisted_name,
-    clippy::collapsible_else_if,
-    clippy::collapsible_if,
-    clippy::ifs_same_cond,
-    clippy::needless_return,
-    clippy::single_element_loop,
-    clippy::branches_sharing_code
-)]
+#![expect(clippy::disallowed_names, clippy::ifs_same_cond)]
 
 fn if_same_then_else2() -> Result<&'static str, ()> {
     if true {
@@ -20,7 +12,6 @@ fn if_same_then_else2() -> Result<&'static str, ()> {
             }
         }
     } else {
-        //~ ERROR same body as `if` block
         for _ in &[42] {
             let bar: &Option<_> = &Some::<u8>(42);
             if bar.is_some() {
@@ -30,20 +21,21 @@ fn if_same_then_else2() -> Result<&'static str, ()> {
             }
         }
     }
+    //~^^^^^^^^^^^^^^^^^^^ if_same_then_else
 
     if true {
         if let Some(a) = Some(42) {}
     } else {
-        //~ ERROR same body as `if` block
         if let Some(a) = Some(42) {}
     }
+    //~^^^^^ if_same_then_else
 
     if true {
         if let (1, .., 3) = (1, 2, 3) {}
     } else {
-        //~ ERROR same body as `if` block
         if let (1, .., 3) = (1, 2, 3) {}
     }
+    //~^^^^^ if_same_then_else
 
     if true {
         if let (1, .., 3) = (1, 2, 3) {}
@@ -88,19 +80,15 @@ fn if_same_then_else2() -> Result<&'static str, ()> {
     }
 
     // Same NaNs
-    let _ = if true {
-        f32::NAN
-    } else {
-        //~ ERROR same body as `if` block
-        f32::NAN
-    };
+    let _ = if true { f32::NAN } else { f32::NAN };
+    //~^ if_same_then_else
 
     if true {
         Ok("foo")?;
     } else {
-        //~ ERROR same body as `if` block
         Ok("foo")?;
     }
+    //~^^^^^ if_same_then_else
 
     if true {
         let foo = "";
@@ -126,6 +114,7 @@ fn if_same_then_else2() -> Result<&'static str, ()> {
         let foo = "";
         return Ok(&foo[0..]);
     }
+    //~^^^^^^^ if_same_then_else
 
     // False positive `if_same_then_else`: `let (x, y)` vs. `let (y, x)`; see issue #3559.
     if true {
@@ -137,6 +126,23 @@ fn if_same_then_else2() -> Result<&'static str, ()> {
         let (y, x) = (1, 2);
         return Ok(&foo[x..y]);
     }
+
+    // Issue #7579
+    let _ = if let Some(0) = None { 0 } else { 0 };
+
+    if true {
+        return Err(());
+    } else if let Some(0) = None {
+        return Err(());
+    }
+
+    let _ = if let Some(0) = None {
+        0
+    } else if let Some(1) = None {
+        0
+    } else {
+        0
+    };
 }
 
 fn main() {}

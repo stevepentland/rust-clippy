@@ -1,26 +1,26 @@
 use clippy_utils::diagnostics::span_lint;
 use rustc_ast::ast::{Item, ItemKind, UseTree, UseTreeKind};
-use rustc_lint::{EarlyContext, EarlyLintPass};
-use rustc_session::{declare_lint_pass, declare_tool_lint};
-use rustc_span::source_map::Span;
+use rustc_lint::{EarlyContext, EarlyLintPass, declare_lint_pass};
+use rustc_span::Span;
 use rustc_span::symbol::Ident;
 
 declare_clippy_lint! {
-    /// **What it does:** Checks for imports that remove "unsafe" from an item's
+    /// ### What it does
+    /// Checks for imports that remove "unsafe" from an item's
     /// name.
     ///
-    /// **Why is this bad?** Renaming makes it less clear which traits and
+    /// ### Why is this bad?
+    /// Renaming makes it less clear which traits and
     /// structures are unsafe.
     ///
-    /// **Known problems:** None.
-    ///
-    /// **Example:**
+    /// ### Example
     /// ```rust,ignore
     /// use std::cell::{UnsafeCell as TotallySafeCell};
     ///
     /// extern crate crossbeam;
     /// use crossbeam::{spawn_unsafe as spawn};
     /// ```
+    #[clippy::version = "pre 1.29.0"]
     pub UNSAFE_REMOVED_FROM_NAME,
     style,
     "`unsafe` removed from API names on import"
@@ -38,7 +38,10 @@ impl EarlyLintPass for UnsafeNameRemoval {
 
 fn check_use_tree(use_tree: &UseTree, cx: &EarlyContext<'_>, span: Span) {
     match use_tree.kind {
-        UseTreeKind::Simple(Some(new_name), ..) => {
+        UseTreeKind::Simple(Some(new_name)) => {
+            if new_name.as_str() == "_" {
+                return;
+            }
             let old_name = use_tree
                 .prefix
                 .segments
@@ -47,10 +50,10 @@ fn check_use_tree(use_tree: &UseTree, cx: &EarlyContext<'_>, span: Span) {
                 .ident;
             unsafe_to_safe_check(old_name, new_name, cx, span);
         },
-        UseTreeKind::Simple(None, ..) | UseTreeKind::Glob => {},
-        UseTreeKind::Nested(ref nested_use_tree) => {
-            for &(ref use_tree, _) in nested_use_tree {
-                check_use_tree(use_tree, cx, span);
+        UseTreeKind::Simple(None) | UseTreeKind::Glob(_) => {},
+        UseTreeKind::Nested { ref items, .. } => {
+            for use_tree in items {
+                check_use_tree(&use_tree.inner, cx, span);
             }
         },
     }
@@ -59,15 +62,12 @@ fn check_use_tree(use_tree: &UseTree, cx: &EarlyContext<'_>, span: Span) {
 fn unsafe_to_safe_check(old_name: Ident, new_name: Ident, cx: &EarlyContext<'_>, span: Span) {
     let old_str = old_name.name.as_str();
     let new_str = new_name.name.as_str();
-    if contains_unsafe(&old_str) && !contains_unsafe(&new_str) {
+    if contains_unsafe(old_str) && !contains_unsafe(new_str) {
         span_lint(
             cx,
             UNSAFE_REMOVED_FROM_NAME,
             span,
-            &format!(
-                "removed `unsafe` from the name of `{}` in use as `{}`",
-                old_str, new_str
-            ),
+            format!("removed `unsafe` from the name of `{old_str}` in use as `{new_str}`"),
         );
     }
 }

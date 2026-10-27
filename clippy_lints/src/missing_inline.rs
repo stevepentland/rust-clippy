@@ -1,27 +1,29 @@
 use clippy_utils::diagnostics::span_lint;
-use rustc_ast::ast;
-use rustc_hir as hir;
-use rustc_lint::{self, LateContext, LateLintPass, LintContext};
-use rustc_session::{declare_lint_pass, declare_tool_lint};
-use rustc_span::source_map::Span;
-use rustc_span::sym;
+use rustc_attr_ir::find_attr;
+use rustc_hir::{ImplItem, ImplItemKind, Item, ItemKind, OwnerId, TraitFn, TraitItem, TraitItemKind};
+use rustc_lint::{LateContext, LateLintPass, declare_lint_pass};
+use rustc_span::Span;
+use rustc_structures::CrateType;
 
 declare_clippy_lint! {
-    /// **What it does:** it lints if an exported function, method, trait method with default impl,
+    /// ### What it does
+    /// It lints if an exported function, method, trait method with default impl,
     /// or trait method impl is not `#[inline]`.
     ///
-    /// **Why is this bad?** In general, it is not. Functions can be inlined across
-    /// crates when that's profitable as long as any form of LTO is used. When LTO is disabled,
-    /// functions that are not `#[inline]` cannot be inlined across crates. Certain types of crates
-    /// might intend for most of the methods in their public API to be able to be inlined across
-    /// crates even when LTO is disabled. For these types of crates, enabling this lint might make
-    /// sense. It allows the crate to require all exported methods to be `#[inline]` by default, and
+    /// ### Why restrict this?
+    /// When a function is not marked `#[inline]`, it is not
+    /// [a “small” candidate for automatic inlining][small], and LTO is not in use, then it is not
+    /// possible for the function to be inlined into the code of any crate other than the one in
+    /// which it is defined.  Depending on the role of the function and the relationship of the crates,
+    /// this could significantly reduce performance.
+    ///
+    /// Certain types of crates might intend for most of the methods in their public API to be able
+    /// to be inlined across crates even when LTO is disabled.
+    /// This lint allows those crates to require all exported methods to be `#[inline]` by default, and
     /// then opt out for specific methods where this might not make sense.
     ///
-    /// **Known problems:** None.
-    ///
-    /// **Example:**
-    /// ```rust
+    /// ### Example
+    /// ```no_run
     /// pub fn foo() {} // missing #[inline]
     /// fn ok() {} // ok
     /// #[inline] pub fn bar() {} // ok
@@ -34,7 +36,7 @@ declare_clippy_lint! {
     ///
     /// struct Baz;
     /// impl Baz {
-    ///    fn private() {} // ok
+    ///     fn private() {} // ok
     /// }
     ///
     /// impl Bar for Baz {
@@ -43,126 +45,60 @@ declare_clippy_lint! {
     ///
     /// pub struct PubBaz;
     /// impl PubBaz {
-    ///    fn private() {} // ok
-    ///    pub fn not_ptrivate() {} // missing #[inline]
+    ///     fn private() {} // ok
+    ///     pub fn not_private() {} // missing #[inline]
     /// }
     ///
     /// impl Bar for PubBaz {
-    ///    fn bar() {} // missing #[inline]
-    ///    fn def_bar() {} // missing #[inline]
+    ///     fn bar() {} // missing #[inline]
+    ///     fn def_bar() {} // missing #[inline]
     /// }
     /// ```
+    ///
+    /// [small]: https://github.com/rust-lang/rust/pull/116505
+    #[clippy::version = "pre 1.29.0"]
     pub MISSING_INLINE_IN_PUBLIC_ITEMS,
     restriction,
     "detects missing `#[inline]` attribute for public callables (functions, trait methods, methods...)"
 }
 
-fn check_missing_inline_attrs(cx: &LateContext<'_>, attrs: &[ast::Attribute], sp: Span, desc: &'static str) {
-    let has_inline = attrs.iter().any(|a| a.has_name(sym::inline));
-    if !has_inline {
+declare_lint_pass!(MissingInline => [MISSING_INLINE_IN_PUBLIC_ITEMS]);
+
+fn check(cx: &LateContext<'_>, item: OwnerId, sp: Span) {
+    if cx.effective_visibilities.is_exported(item.def_id)
+        && !find_attr!(cx.tcx.hir_attrs(item.into()), Inline(..))
+        // Rust `inline` doesn't mean anything with external linkage.
+        && !cx.tcx.codegen_fn_attrs(item.def_id).contains_extern_indicator()
+        && !cx.tcx.crate_types().iter().any(|&t| matches!(t, CrateType::ProcMacro))
+        && !sp.in_external_macro(cx.tcx.sess.source_map())
+    {
         span_lint(
             cx,
             MISSING_INLINE_IN_PUBLIC_ITEMS,
             sp,
-            &format!("missing `#[inline]` for {}", desc),
+            "missing `#[inline]` on a publicly callable function",
         );
     }
 }
 
-fn is_executable_or_proc_macro(cx: &LateContext<'_>) -> bool {
-    use rustc_session::config::CrateType;
-
-    cx.tcx
-        .sess
-        .crate_types()
-        .iter()
-        .any(|t: &CrateType| matches!(t, CrateType::Executable | CrateType::ProcMacro))
-}
-
-declare_lint_pass!(MissingInline => [MISSING_INLINE_IN_PUBLIC_ITEMS]);
-
 impl<'tcx> LateLintPass<'tcx> for MissingInline {
-    fn check_item(&mut self, cx: &LateContext<'tcx>, it: &'tcx hir::Item<'_>) {
-        if rustc_middle::lint::in_external_macro(cx.sess(), it.span) || is_executable_or_proc_macro(cx) {
-            return;
+    fn check_item(&mut self, cx: &LateContext<'tcx>, it: &'tcx Item<'_>) {
+        if let ItemKind::Fn { .. } = it.kind {
+            check(cx, it.owner_id, it.span);
         }
-
-        if !cx.access_levels.is_exported(it.hir_id()) {
-            return;
-        }
-        match it.kind {
-            hir::ItemKind::Fn(..) => {
-                let desc = "a function";
-                let attrs = cx.tcx.hir().attrs(it.hir_id());
-                check_missing_inline_attrs(cx, attrs, it.span, desc);
-            },
-            hir::ItemKind::Trait(ref _is_auto, ref _unsafe, ref _generics, _bounds, trait_items) => {
-                // note: we need to check if the trait is exported so we can't use
-                // `LateLintPass::check_trait_item` here.
-                for tit in trait_items {
-                    let tit_ = cx.tcx.hir().trait_item(tit.id);
-                    match tit_.kind {
-                        hir::TraitItemKind::Const(..) | hir::TraitItemKind::Type(..) => {},
-                        hir::TraitItemKind::Fn(..) => {
-                            if tit.defaultness.has_value() {
-                                // trait method with default body needs inline in case
-                                // an impl is not provided
-                                let desc = "a default trait method";
-                                let item = cx.tcx.hir().trait_item(tit.id);
-                                let attrs = cx.tcx.hir().attrs(item.hir_id());
-                                check_missing_inline_attrs(cx, attrs, item.span, desc);
-                            }
-                        },
-                    }
-                }
-            },
-            hir::ItemKind::Const(..)
-            | hir::ItemKind::Enum(..)
-            | hir::ItemKind::Mod(..)
-            | hir::ItemKind::Static(..)
-            | hir::ItemKind::Struct(..)
-            | hir::ItemKind::TraitAlias(..)
-            | hir::ItemKind::GlobalAsm(..)
-            | hir::ItemKind::TyAlias(..)
-            | hir::ItemKind::Union(..)
-            | hir::ItemKind::OpaqueTy(..)
-            | hir::ItemKind::ExternCrate(..)
-            | hir::ItemKind::ForeignMod { .. }
-            | hir::ItemKind::Impl { .. }
-            | hir::ItemKind::Use(..) => {},
-        };
     }
 
-    fn check_impl_item(&mut self, cx: &LateContext<'tcx>, impl_item: &'tcx hir::ImplItem<'_>) {
-        use rustc_middle::ty::{ImplContainer, TraitContainer};
-        if rustc_middle::lint::in_external_macro(cx.sess(), impl_item.span) || is_executable_or_proc_macro(cx) {
-            return;
+    fn check_trait_item(&mut self, cx: &LateContext<'tcx>, item: &'tcx TraitItem<'_>) {
+        if let TraitItemKind::Fn(_, f) = item.kind
+            && let TraitFn::Provided(_) = f
+        {
+            check(cx, item.owner_id, item.span);
         }
+    }
 
-        // If the item being implemented is not exported, then we don't need #[inline]
-        if !cx.access_levels.is_exported(impl_item.hir_id()) {
-            return;
+    fn check_impl_item(&mut self, cx: &LateContext<'tcx>, item: &'tcx ImplItem<'_>) {
+        if let ImplItemKind::Fn(..) = item.kind {
+            check(cx, item.owner_id, item.span);
         }
-
-        let desc = match impl_item.kind {
-            hir::ImplItemKind::Fn(..) => "a method",
-            hir::ImplItemKind::Const(..) | hir::ImplItemKind::TyAlias(_) => return,
-        };
-
-        let trait_def_id = match cx.tcx.associated_item(impl_item.def_id).container {
-            TraitContainer(cid) => Some(cid),
-            ImplContainer(cid) => cx.tcx.impl_trait_ref(cid).map(|t| t.def_id),
-        };
-
-        if let Some(trait_def_id) = trait_def_id {
-            if trait_def_id.is_local() && !cx.access_levels.is_exported(impl_item.hir_id()) {
-                // If a trait is being implemented for an item, and the
-                // trait is not exported, we don't need #[inline]
-                return;
-            }
-        }
-
-        let attrs = cx.tcx.hir().attrs(impl_item.hir_id());
-        check_missing_inline_attrs(cx, attrs, impl_item.span, desc);
     }
 }

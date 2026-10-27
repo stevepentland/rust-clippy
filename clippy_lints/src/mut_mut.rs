@@ -1,115 +1,140 @@
-use clippy_utils::diagnostics::span_lint;
-use clippy_utils::higher;
-use rustc_hir as hir;
-use rustc_hir::intravisit;
-use rustc_lint::{LateContext, LateLintPass, LintContext};
-use rustc_middle::hir::map::Map;
-use rustc_middle::lint::in_external_macro;
+use clippy_utils::diagnostics::span_lint_and_then;
+use clippy_utils::source::walk_span_to_context;
+use rustc_errors::Applicability;
+use rustc_hir::{self as hir, AmbigArg, BorrowKind, Expr, ExprKind, HirId, Mutability, TyKind};
+use rustc_lint::{LateContext, LateLintPass, impl_lint_pass};
 use rustc_middle::ty;
-use rustc_session::{declare_lint_pass, declare_tool_lint};
+use rustc_span::ExpnKind;
 
 declare_clippy_lint! {
-    /// **What it does:** Checks for instances of `mut mut` references.
+    /// ### What it does
+    /// Checks for instances of `mut mut` references.
     ///
-    /// **Why is this bad?** Multiple `mut`s don't add anything meaningful to the
-    /// source. This is either a copy'n'paste error, or it shows a fundamental
-    /// misunderstanding of references.
+    /// ### Why is this bad?
+    /// This is usually just a typo or a misunderstanding of how references work.
     ///
-    /// **Known problems:** None.
+    /// ### Example
+    /// ```no_run
+    /// let x = &mut &mut 1;
     ///
-    /// **Example:**
-    /// ```rust
-    /// # let mut y = 1;
-    /// let x = &mut &mut y;
+    /// let mut x = &mut 1;
+    /// let y = &mut x;
+    ///
+    /// fn foo(x: &mut &mut u32) {}
     /// ```
+    /// Use instead
+    /// ```no_run
+    /// let x = &mut 1;
+    ///
+    /// let mut x = &mut 1;
+    /// let y = &mut *x; // reborrow
+    ///
+    /// fn foo(x: &mut u32) {}
+    /// ```
+    #[clippy::version = "pre 1.29.0"]
     pub MUT_MUT,
     pedantic,
-    "usage of double-mut refs, e.g., `&mut &mut ...`"
+    "usage of double mut-refs, e.g., `&mut &mut ...`"
 }
 
-declare_lint_pass!(MutMut => [MUT_MUT]);
+impl_lint_pass!(MutMut => [MUT_MUT]);
+
+#[derive(Default)]
+pub(crate) struct MutMut {
+    skip_id: Option<HirId>,
+}
 
 impl<'tcx> LateLintPass<'tcx> for MutMut {
-    fn check_block(&mut self, cx: &LateContext<'tcx>, block: &'tcx hir::Block<'_>) {
-        intravisit::walk_block(&mut MutVisitor { cx }, block);
-    }
-
-    fn check_ty(&mut self, cx: &LateContext<'tcx>, ty: &'tcx hir::Ty<'_>) {
-        use rustc_hir::intravisit::Visitor;
-
-        MutVisitor { cx }.visit_ty(ty);
-    }
-}
-
-pub struct MutVisitor<'a, 'tcx> {
-    cx: &'a LateContext<'tcx>,
-}
-
-impl<'a, 'tcx> intravisit::Visitor<'tcx> for MutVisitor<'a, 'tcx> {
-    type Map = Map<'tcx>;
-
-    fn visit_expr(&mut self, expr: &'tcx hir::Expr<'_>) {
-        if in_external_macro(self.cx.sess(), expr.span) {
-            return;
-        }
-
-        if let Some((_, arg, body, _)) = higher::for_loop(expr) {
-            // A `for` loop lowers to:
-            // ```rust
-            // match ::std::iter::Iterator::next(&mut iter) {
-            // //                                ^^^^
-            // ```
-            // Let's ignore the generated code.
-            intravisit::walk_expr(self, arg);
-            intravisit::walk_expr(self, body);
-        } else if let hir::ExprKind::AddrOf(hir::BorrowKind::Ref, hir::Mutability::Mut, e) = expr.kind {
-            if let hir::ExprKind::AddrOf(hir::BorrowKind::Ref, hir::Mutability::Mut, _) = e.kind {
-                span_lint(
-                    self.cx,
-                    MUT_MUT,
-                    expr.span,
-                    "generally you want to avoid `&mut &mut _` if possible",
-                );
-            } else if let ty::Ref(_, _, hir::Mutability::Mut) = self.cx.typeck_results().expr_ty(e).kind() {
-                span_lint(
-                    self.cx,
-                    MUT_MUT,
-                    expr.span,
-                    "this expression mutably borrows a mutable reference. Consider reborrowing",
-                );
-            }
-        }
-    }
-
-    fn visit_ty(&mut self, ty: &'tcx hir::Ty<'_>) {
-        if let hir::TyKind::Rptr(
-            _,
-            hir::MutTy {
-                ty: pty,
-                mutbl: hir::Mutability::Mut,
-            },
-        ) = ty.kind
+    fn check_expr(&mut self, cx: &LateContext<'tcx>, e: &'tcx Expr<'_>) {
+        if let ExprKind::AddrOf(BorrowKind::Ref, Mutability::Mut, base) = e.kind
+            && let ctxt = e.span.ctxt()
+            && ctxt == base.span.ctxt()
         {
-            if let hir::TyKind::Rptr(
-                _,
-                hir::MutTy {
-                    mutbl: hir::Mutability::Mut,
-                    ..
-                },
-            ) = pty.kind
+            if self.skip_id.replace(base.hir_id) == Some(e.hir_id) {
+                return;
+            }
+
+            if let ExprKind::AddrOf(BorrowKind::Ref, Mutability::Mut, mut base2) = base.kind {
+                while let ExprKind::AddrOf(BorrowKind::Ref, Mutability::Mut, next) = base2.kind
+                    && ctxt == base2.span.ctxt()
+                {
+                    base2 = next;
+                }
+                if !ctxt.in_external_macro(cx.tcx.sess.source_map())
+                    && let Some(sp) = walk_span_to_context(base2.span, ctxt)
+                {
+                    span_lint_and_then(
+                        cx,
+                        MUT_MUT,
+                        e.span.until(sp),
+                        "multiple successive mutable borrows",
+                        |diag| {
+                            diag.span_suggestion_verbose(
+                                base.span.until(sp),
+                                "make only a single borrow",
+                                "",
+                                Applicability::MaybeIncorrect,
+                            );
+                        },
+                    );
+                }
+            } else if let ty::Ref(_, ty, Mutability::Mut) = *cx.typeck_results().expr_ty(base).kind()
+                && ty.peel_refs().is_sized(cx.tcx, cx.typing_env())
+                && !ctxt.in_external_macro(cx.tcx.sess.source_map())
+                // Don't lint on the explicit borrow in for-loop desugarings.
+                && !matches!(ctxt.outer_expn_data().kind, ExpnKind::Desugaring(_))
+                && let Some(sp) = walk_span_to_context(base.span, ctxt)
             {
-                span_lint(
-                    self.cx,
-                    MUT_MUT,
-                    ty.span,
-                    "generally you want to avoid `&mut &mut _` if possible",
-                );
+                span_lint_and_then(cx, MUT_MUT, e.span.until(sp), "borrow of a mutable reference", |diag| {
+                    diag.span_suggestion_verbose(
+                        sp.shrink_to_lo(),
+                        "reborrow instead",
+                        "*",
+                        Applicability::MaybeIncorrect,
+                    );
+                });
             }
         }
-
-        intravisit::walk_ty(self, ty);
     }
-    fn nested_visit_map(&mut self) -> intravisit::NestedVisitorMap<Self::Map> {
-        intravisit::NestedVisitorMap::None
+
+    fn check_ty(&mut self, cx: &LateContext<'tcx>, ty: &'tcx hir::Ty<'_, AmbigArg>) {
+        if let TyKind::Ref(_, base, base_mutbl) = ty.kind
+            && base_mutbl.is_mut()
+            && let ctxt = ty.span.ctxt()
+            && ctxt == base.span.ctxt()
+        {
+            if self.skip_id.replace(base.hir_id) == Some(ty.hir_id) {
+                return;
+            }
+
+            if let TyKind::Ref(_, mut base2, base2_mutbl) = base.kind
+                && base2_mutbl.is_mut()
+            {
+                while let TyKind::Ref(_, next, next_mutbl) = base2.kind
+                    && next_mutbl.is_mut()
+                    && ctxt == base2.span.ctxt()
+                {
+                    base2 = next;
+                }
+                if !ctxt.in_external_macro(cx.tcx.sess.source_map())
+                    && let Some(sp) = walk_span_to_context(base2.span, ctxt)
+                {
+                    span_lint_and_then(
+                        cx,
+                        MUT_MUT,
+                        ty.span.until(sp),
+                        "multiple successive mutable references",
+                        |diag| {
+                            diag.span_suggestion_verbose(
+                                base.span.until(sp),
+                                "use only a single mutable reference",
+                                "",
+                                Applicability::MaybeIncorrect,
+                            );
+                        },
+                    );
+                }
+            }
+        }
     }
 }

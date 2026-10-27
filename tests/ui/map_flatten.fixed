@@ -1,26 +1,67 @@
-// run-rustfix
+#![warn(clippy::map_flatten)]
+#![allow(clippy::manual_filter, clippy::unnecessary_filter_map)]
 
-#![warn(clippy::all, clippy::pedantic)]
-#![allow(clippy::let_underscore_drop)]
-#![allow(clippy::missing_docs_in_private_items)]
-#![allow(clippy::map_identity)]
-#![allow(clippy::unnecessary_wraps)]
+// issue #8506, multi-line
+#[rustfmt::skip]
+fn long_span() {
+    let _: Option<i32> = Some(1)
+        .and_then(|x| {
+        //~^ map_flatten
 
-fn main() {
-    // mapping to Option on Iterator
-    fn option_id(x: i8) -> Option<i8> {
-        Some(x)
-    }
-    let option_id_ref: fn(i8) -> Option<i8> = option_id;
-    let option_id_closure = |x| Some(x);
-    let _: Vec<_> = vec![5_i8; 6].into_iter().filter_map(option_id).collect();
-    let _: Vec<_> = vec![5_i8; 6].into_iter().filter_map(option_id_ref).collect();
-    let _: Vec<_> = vec![5_i8; 6].into_iter().filter_map(option_id_closure).collect();
-    let _: Vec<_> = vec![5_i8; 6].into_iter().filter_map(|x| x.checked_add(1)).collect();
 
-    // mapping to Iterator on Iterator
-    let _: Vec<_> = vec![5_i8; 6].into_iter().flat_map(|x| 0..x).collect();
+            if x <= 5 {
+                Some(x)
+            } else {
+                None
+            }
+        });
 
-    // mapping to Option on Option
-    let _: Option<_> = (Some(Some(1))).and_then(|x| x);
+    let _: Result<i32, i32> = Ok(1)
+        .and_then(|x| {
+        //~^ map_flatten
+
+            if x == 1 {
+                Ok(x)
+            } else {
+                Err(0)
+            }
+        });
+
+    let result: Result<i32, i32> = Ok(2);
+    fn do_something() { }
+    let _: Result<i32, i32> = result
+        .and_then(|res| {
+        //~^ map_flatten
+
+            if res > 0 {
+                do_something();
+                Ok(res)
+            } else {
+                Err(0)
+            }
+        });
+
+    let _: Vec<_> = vec![5_i8; 6]
+        .into_iter()
+        .filter_map(|some_value| {
+        //~^ map_flatten
+
+            if some_value > 3 {
+                Some(some_value)
+            } else {
+                None
+            }
+        })
+        .collect();
 }
+
+#[allow(clippy::useless_vec)]
+fn no_suggestion_if_comments_present() {
+    let vec = vec![vec![1, 2, 3]];
+    let _ = vec
+        .iter()
+        // a lovely comment explaining the code in very detail
+        .flat_map(|x| x.iter());
+}
+
+fn main() {}

@@ -1,38 +1,9 @@
-// aux-build:option_helpers.rs
-// edition:2018
+#![warn(clippy::filter_next, clippy::new_ret_no_self)]
 
-#![warn(clippy::all, clippy::pedantic)]
-#![allow(
-    clippy::blacklisted_name,
-    clippy::default_trait_access,
-    clippy::missing_docs_in_private_items,
-    clippy::missing_safety_doc,
-    clippy::non_ascii_literal,
-    clippy::new_without_default,
-    clippy::needless_pass_by_value,
-    clippy::needless_lifetimes,
-    clippy::print_stdout,
-    clippy::must_use_candidate,
-    clippy::use_self,
-    clippy::useless_format,
-    clippy::wrong_self_convention,
-    clippy::unused_self,
-    unused
-)]
-
-#[macro_use]
-extern crate option_helpers;
-
-use std::collections::BTreeMap;
-use std::collections::HashMap;
-use std::collections::HashSet;
-use std::collections::VecDeque;
-use std::iter::FromIterator;
+use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::ops::Mul;
 use std::rc::{self, Rc};
 use std::sync::{self, Arc};
-
-use option_helpers::IteratorFalsePositives;
 
 struct Lt<'a> {
     foo: &'a u32,
@@ -52,7 +23,7 @@ struct Lt2<'a> {
 
 impl<'a> Lt2<'a> {
     // The lifetime is different, but that’s irrelevant; see issue #734.
-    pub fn new(s: &str) -> Lt2 {
+    pub fn new(s: &str) -> Lt2<'_> {
         unimplemented!()
     }
 }
@@ -103,6 +74,7 @@ struct BadNew;
 
 impl BadNew {
     fn new() -> i32 {
+        //~^ new_ret_no_self
         0
     }
 }
@@ -117,22 +89,4 @@ impl Mul<T> for T {
     }
 }
 
-/// Checks implementation of `FILTER_NEXT` lint.
-#[rustfmt::skip]
-fn filter_next() {
-    let v = vec![3, 2, 1, 0, -1, -2, -3];
-
-    // Multi-line case.
-    let _ = v.iter().filter(|&x| {
-                                *x < 0
-                            }
-                   ).next();
-
-    // Check that we don't lint if the caller is not an `Iterator`.
-    let foo = IteratorFalsePositives { foo: 0 };
-    let _ = foo.filter().next();
-}
-
-fn main() {
-    filter_next();
-}
+fn main() {}

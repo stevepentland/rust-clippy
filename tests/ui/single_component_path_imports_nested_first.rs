@@ -1,9 +1,10 @@
-// edition:2018
 #![warn(clippy::single_component_path_imports)]
-#![allow(unused_imports)]
-
+//@no-rustfix
 use regex;
+//~^ single_component_path_imports
+
 use serde as edres;
+
 pub use serde;
 
 fn main() {
@@ -11,7 +12,10 @@ fn main() {
 }
 
 mod root_nested_use_mod {
+    #[rustfmt::skip]
     use {regex, serde};
-    #[allow(dead_code)]
+    //~^ single_component_path_imports
+    //~| single_component_path_imports
+
     fn root_nested_use_mod() {}
 }
